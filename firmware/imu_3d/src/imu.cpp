@@ -6,6 +6,13 @@
 ImuReport imuReport = {0};
 BNO08x myIMU;
 
+// Auto tare (2026-11-26, Koga's request): while cornering the yaw
+// keeps tracking, but once the yaw stays within AUTO_TARE_TOL_DEG
+// for AUTO_TARE_STILL_MS (i.e. running straight / standing still),
+// the current pose becomes the new zero point automatically.
+static const float AUTO_TARE_TOL_DEG = 2.0f;
+static const unsigned long AUTO_TARE_STILL_MS = 2000;
+
 static float baseQw = 1;
 static float baseQx = 0;
 static float baseQy = 0;
@@ -104,6 +111,35 @@ static void updateIMUInternal() {
   imuReport.qy = cy;
   imuReport.qz = cz;
   imuReport.valid = true;
+
+  // Auto tare: if the reported yaw has stayed within the tolerance
+  // band for the full still period, adopt the current orientation
+  // as the base. NOTE: unlike the button tare above, no +125 deg
+  // fixed offset is applied here, so the yaw becomes exactly 0.
+  // (The button path is left untouched; its +125 deg offset is a
+  // presumed mounting correction whose meaning is still unverified
+  // -- see docs/implementation-guide.md, experiment 4.)
+  static float anchorYaw = 0;
+  static unsigned long stillSinceMs = 0;
+  static bool anchorValid = false;
+
+  float dy = imuReport.yaw - anchorYaw;
+  if (dy > 180.0f) dy -= 360.0f;
+  if (dy < -180.0f) dy += 360.0f;
+
+  unsigned long nowMs = millis();
+  if (!anchorValid || fabsf(dy) > AUTO_TARE_TOL_DEG) {
+    anchorYaw = imuReport.yaw;
+    stillSinceMs = nowMs;
+    anchorValid = true;
+  } else if (nowMs - stillSinceMs >= AUTO_TARE_STILL_MS) {
+    baseQw = qw;
+    baseQx = qx;
+    baseQy = qy;
+    baseQz = qz;
+    anchorYaw = 0; // yaw reads 0 from the next report on
+    stillSinceMs = nowMs;
+  }
 }
 
 bool initIMU() {

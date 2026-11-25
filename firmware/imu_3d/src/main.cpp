@@ -1,4 +1,5 @@
 #include "common.h"
+#include "gps.h"
 #include "imu.h"
 #include "oled.h"
 #include "serial_output.h"
@@ -29,12 +30,19 @@ void setup() {
     while (1);
   }
 
+  // GPS is an add-on: warn but keep running if it fails, so the
+  // IMU display still works with the module unplugged.
+  if (!initGPS()) {
+    Serial.println("GPS init failed");
+  }
+
   // Initialize serial output at 10ms interval
   serialOutputInit(10);
 }
 
 void loop() {
   updateIMU();
+  updateGPS();
   updateOLED();
   // Run serial output task (non-blocking). Sends every 10ms.
   serialOutputLoop();
