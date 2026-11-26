@@ -61,27 +61,20 @@ static void updateIMUInternal() {
   }
 
   if (digitalRead(BTN_PIN) == LOW) {
+    /* Mounting calibration (2026-11-26, Koga's decision): pressing the
+       button after the unit is installed in the car makes the current
+       attitude the zero for pitch, yaw and roll alike, so the display
+       reads correctly whatever angle the sensor is mounted at. The
+       former +125 deg fixed Z offset was removed: it used to rotate
+       the reported frame so it matched the drawn view's front-left
+       orientation, and that view alignment now lives on the drawing
+       side (the VIEW quaternion in oled.cpp), so the sensor side
+       stays clean. The automatic reset below stays yaw-only, so a
+       slope's incline is never erased while driving. */
     baseQw = qw;
     baseQx = qx;
     baseQy = qy;
     baseQz = qz;
-
-    float angle = +125.0 * PI / 180.0;
-    float half = angle / 2.0;
-    float fw = cos(half);
-    float fx = 0;
-    float fy = 0;
-    float fz = sin(half);
-
-    float rw, rx, ry, rz;
-    quatMultiply(fw, fx, fy, fz,
-                 baseQw, baseQx, baseQy, baseQz,
-                 rw, rx, ry, rz);
-
-    baseQw = rw;
-    baseQx = rx;
-    baseQy = ry;
-    baseQz = rz;
   }
 
   float iw, ix, iy, iz;
@@ -115,15 +108,13 @@ static void updateIMUInternal() {
   imuReport.valid = true;
 
   /* Auto tare: if the reported yaw has stayed within the tolerance
-     band for the full still period, re-zero the yaw. The base is
+     band for the full still period, re-zero the yaw only. The base is
      rebuilt as base = tilt^-1 * current, where tilt is the current
      relative pitch/roll only (qy(pitch) * qx(roll)). The relative
      orientation therefore keeps its pitch/roll and its yaw becomes
-     exactly 0. Unlike the button tare above, no +125 deg fixed
-     offset is applied. (The button path is left untouched; its
-     +125 deg offset is a presumed mounting correction whose meaning
-     is still unverified -- see docs/implementation-guide.md,
-     experiment 4.) */
+     exactly 0. The button above is the full-pose tare used for
+     mounting calibration; this automatic one never touches
+     pitch/roll, so parking on a slope keeps the incline reading. */
   static float anchorYaw = 0;
   static unsigned long stillSinceMs = 0;
   static bool anchorValid = false;
