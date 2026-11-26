@@ -4,10 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-// GPS module on UART1 (Serial2): TX=GP8, RX=GP9.
-// See docs/gps-logger-design.md. NEO-series modules speak NMEA at
-// 9600 bps by default; UBX configuration (higher rate, fewer
-// sentences) comes later, once the module model is confirmed.
+/* GPS module on UART1 (Serial2): TX=GP8, RX=GP9. */
+/* See docs/gps-logger-design.md. NEO-series modules speak NMEA at */
+/* 9600 bps by default; UBX configuration (higher rate, fewer */
+/* sentences) comes later, once the module model is confirmed. */
 
 GpsReport gpsReport;
 
@@ -23,7 +23,7 @@ bool initGPS() {
   return true;
 }
 
-// NMEA checksum: XOR of all characters between '$' and '*'.
+/* NMEA checksum: XOR of all characters between '$' and '*'. */
 static bool checksumOk(const char *s) {
   const char *star = strchr(s, '*');
   if (!star) return false;
@@ -34,8 +34,8 @@ static bool checksumOk(const char *s) {
   return cs == (unsigned char)expected;
 }
 
-// Copy field idx (0-based; field 0 is the "$GPRMC" header) into out.
-// Returns false when the field is missing or empty.
+/* Copy field idx (0-based; field 0 is the "$GPRMC" header) into out. */
+/* Returns false when the field is missing or empty. */
 static bool getField(const char *s, int idx, char *out, size_t outSize) {
   const char *p = s;
   for (int i = 0; i < idx; i++) {
@@ -52,7 +52,7 @@ static bool getField(const char *s, int idx, char *out, size_t outSize) {
   return n > 0;
 }
 
-// NMEA coordinate ddmm.mmmm (or dddmm.mmmm) -> decimal degrees.
+/* NMEA coordinate ddmm.mmmm (or dddmm.mmmm) -> decimal degrees. */
 static double nmeaToDeg(double v) {
   int deg = (int)(v / 100.0);
   double minutes = v - deg * 100.0;
@@ -60,8 +60,8 @@ static double nmeaToDeg(double v) {
 }
 
 static void printGpsLine() {
-  // One CSV line per RMC, alongside the Q lines from serial_output:
-  // G,lat,lon,speed_kmh,course_deg,hh:mm:ss,fix,sats
+  /* One CSV line per RMC, alongside the Q lines from serial_output: */
+  /* G,lat,lon,speed_kmh,course_deg,hh:mm:ss,fix,sats */
   char out[128];
   snprintf(out, sizeof(out), "G,%.7f,%.7f,%.2f,%.1f,%02u:%02u:%02u,%u,%u",
            gpsReport.lat_deg, gpsReport.lon_deg,
@@ -75,18 +75,18 @@ static void parseRMC(const char *s) {
   char buf[24];
   GpsReport &g = gpsReport;
 
-  // Field 1: UTC time hhmmss.ss
+  /* Field 1: UTC time hhmmss.ss */
   if (getField(s, 1, buf, sizeof(buf)) && strlen(buf) >= 6) {
     g.hour = (uint8_t)((buf[0] - '0') * 10 + (buf[1] - '0'));
     g.minute = (uint8_t)((buf[2] - '0') * 10 + (buf[3] - '0'));
     g.second = (uint8_t)((buf[4] - '0') * 10 + (buf[5] - '0'));
   }
 
-  // Field 2: status 'A' = valid fix, 'V' = void
+  /* Field 2: status 'A' = valid fix, 'V' = void */
   char status = 0;
   if (getField(s, 2, buf, sizeof(buf))) status = buf[0];
 
-  // Fields 3-6: lat, N/S, lon, E/W (ddmm.mmmm / dddmm.mmmm)
+  /* Fields 3-6: lat, N/S, lon, E/W (ddmm.mmmm / dddmm.mmmm) */
   char fLat[24], fNS[4], fLon[24], fEW[4];
   if (getField(s, 3, fLat, sizeof(fLat)) && getField(s, 4, fNS, sizeof(fNS)) &&
       getField(s, 5, fLon, sizeof(fLon)) && getField(s, 6, fEW, sizeof(fEW)) &&
@@ -99,16 +99,16 @@ static void parseRMC(const char *s) {
     g.lon_deg = lon;
   }
 
-  // Field 7: speed over ground (knots) -> km/h
+  /* Field 7: speed over ground (knots) -> km/h */
   if (getField(s, 7, buf, sizeof(buf))) {
     g.speed_kmh = (float)(atof(buf) * 1.852);
   }
-  // Field 8: course over ground (degrees, true north)
+  /* Field 8: course over ground (degrees, true north) */
   if (getField(s, 8, buf, sizeof(buf))) {
     g.course_deg = (float)atof(buf);
   }
 
-  // Field 9: date ddmmyy
+  /* Field 9: date ddmmyy */
   if (getField(s, 9, buf, sizeof(buf)) && strlen(buf) >= 6) {
     g.day = (uint8_t)((buf[0] - '0') * 10 + (buf[1] - '0'));
     g.month = (uint8_t)((buf[2] - '0') * 10 + (buf[3] - '0'));
@@ -124,7 +124,7 @@ static void parseRMC(const char *s) {
 
 static void parseGGA(const char *s) {
   char buf[12];
-  // Field 7: satellites in use
+  /* Field 7: satellites in use */
   if (getField(s, 7, buf, sizeof(buf))) {
     gpsReport.sats = (uint8_t)atoi(buf);
   }
@@ -133,7 +133,7 @@ static void parseGGA(const char *s) {
 static void handleSentence(const char *s) {
   if (strlen(s) < 6) return;
   if (!checksumOk(s)) return;
-  // Sentence type is at s[3..5] for any talker ($GP..., $GN..., ...).
+  /* Sentence type is at s[3..5] for any talker ($GP..., $GN..., ...). */
   if (strncmp(s + 3, "RMC", 3) == 0) {
     parseRMC(s);
   } else if (strncmp(s + 3, "GGA", 3) == 0) {
@@ -145,7 +145,7 @@ void updateGPS() {
   while (Serial2.available() > 0) {
     char c = (char)Serial2.read();
     if (c == '$') {
-      // Start of a new sentence; resync even mid-line.
+      /* Start of a new sentence; resync even mid-line. */
       lineLen = 0;
       lineBuf[lineLen++] = c;
     } else if (c == '\n') {
@@ -155,12 +155,12 @@ void updateGPS() {
         lineLen = 0;
       }
     } else if (c == '\r') {
-      // Ignore CR; sentences end with CRLF.
+      /* Ignore CR; sentences end with CRLF. */
     } else if (lineLen > 0) {
       if (lineLen < sizeof(lineBuf) - 1) {
         lineBuf[lineLen++] = c;
       } else {
-        lineLen = 0; // Overlong line: drop the sentence.
+        lineLen = 0; /* Overlong line: drop the sentence. */
       }
     }
   }

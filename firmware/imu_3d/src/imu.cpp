@@ -6,10 +6,12 @@
 ImuReport imuReport = {0};
 BNO08x myIMU;
 
-// Auto tare (2026-11-26, Koga's request): while cornering the yaw
-// keeps tracking, but once the yaw stays within AUTO_TARE_TOL_DEG
-// for AUTO_TARE_STILL_MS (i.e. running straight / standing still),
-// the current pose becomes the new zero point automatically.
+/* Auto tare (2026-11-26, Koga's request): while cornering the yaw
+   keeps tracking, but once the yaw stays within AUTO_TARE_TOL_DEG
+   for AUTO_TARE_STILL_MS (i.e. running straight / standing still),
+   the yaw is re-zeroed automatically. Only the yaw is zeroed:
+   pitch and roll are preserved, so sitting on a slope does not
+   erase the incline. */
 static const float AUTO_TARE_TOL_DEG = 2.0f;
 static const unsigned long AUTO_TARE_STILL_MS = 2000;
 
@@ -112,13 +114,16 @@ static void updateIMUInternal() {
   imuReport.qz = cz;
   imuReport.valid = true;
 
-  // Auto tare: if the reported yaw has stayed within the tolerance
-  // band for the full still period, adopt the current orientation
-  // as the base. NOTE: unlike the button tare above, no +125 deg
-  // fixed offset is applied here, so the yaw becomes exactly 0.
-  // (The button path is left untouched; its +125 deg offset is a
-  // presumed mounting correction whose meaning is still unverified
-  // -- see docs/implementation-guide.md, experiment 4.)
+  /* Auto tare: if the reported yaw has stayed within the tolerance
+     band for the full still period, re-zero the yaw. The base is
+     rebuilt as base = tilt^-1 * current, where tilt is the current
+     relative pitch/roll only (qy(pitch) * qx(roll)). The relative
+     orientation therefore keeps its pitch/roll and its yaw becomes
+     exactly 0. Unlike the button tare above, no +125 deg fixed
+     offset is applied. (The button path is left untouched; its
+     +125 deg offset is a presumed mounting correction whose meaning
+     is still unverified -- see docs/implementation-guide.md,
+     experiment 4.) */
   static float anchorYaw = 0;
   static unsigned long stillSinceMs = 0;
   static bool anchorValid = false;
@@ -133,11 +138,19 @@ static void updateIMUInternal() {
     stillSinceMs = nowMs;
     anchorValid = true;
   } else if (nowMs - stillSinceMs >= AUTO_TARE_STILL_MS) {
-    baseQw = qw;
-    baseQx = qx;
-    baseQy = qy;
-    baseQz = qz;
-    anchorYaw = 0; // yaw reads 0 from the next report on
+    float hp = imuReport.pitch * PI / 360.0f; /* half angle, rad */
+    float hr = imuReport.roll * PI / 360.0f;
+    float cp = cos(hp), sp = sin(hp), cr = cos(hr), sr = sin(hr);
+    /* tilt = qy(pitch) * qx(roll) = (cp*cr, cp*sr, sp*cr, -sp*sr);
+       pass its inverse (conjugate) as the left factor. */
+    float nbw, nbx, nby, nbz;
+    quatMultiply(cp * cr, -(cp * sr), -(sp * cr), -(-sp * sr),
+                 qw, qx, qy, qz, nbw, nbx, nby, nbz);
+    baseQw = nbw;
+    baseQx = nbx;
+    baseQy = nby;
+    baseQz = nbz;
+    anchorYaw = 0; /* yaw reads 0 from the next report on */
     stillSinceMs = nowMs;
   }
 }

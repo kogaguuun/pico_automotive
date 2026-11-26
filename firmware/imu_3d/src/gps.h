@@ -6,4 +6,4 @@
 bool initGPS();
 void updateGPS();
 
-#endif // GPS_H
+#endif /* GPS_H */
