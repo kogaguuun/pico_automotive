@@ -6,6 +6,15 @@
 ImuReport imuReport = {0};
 BNO08x myIMU;
 
+/* Auto tare (2026-11-26, Koga's request): while cornering the yaw
+   keeps tracking, but once the yaw stays within AUTO_TARE_TOL_DEG
+   for AUTO_TARE_STILL_MS (i.e. running straight / standing still),
+   the yaw is re-zeroed automatically. Only the yaw is zeroed:
+   pitch and roll are preserved, so sitting on a slope does not
+   erase the incline. */
+static const float AUTO_TARE_TOL_DEG = 2.0f;
+static const unsigned long AUTO_TARE_STILL_MS = 2000;
+
 static float baseQw = 1;
 static float baseQx = 0;
 static float baseQy = 0;
@@ -52,27 +61,20 @@ static void updateIMUInternal() {
   }
 
   if (digitalRead(BTN_PIN) == LOW) {
+    /* Mounting calibration (2026-11-26, Koga's decision): pressing the
+       button after the unit is installed in the car makes the current
+       attitude the zero for pitch, yaw and roll alike, so the display
+       reads correctly whatever angle the sensor is mounted at. The
+       former +125 deg fixed Z offset was removed: it used to rotate
+       the reported frame so it matched the drawn view's front-left
+       orientation, and that view alignment now lives on the drawing
+       side (the VIEW quaternion in oled.cpp), so the sensor side
+       stays clean. The automatic reset below stays yaw-only, so a
+       slope's incline is never erased while driving. */
     baseQw = qw;
     baseQx = qx;
     baseQy = qy;
     baseQz = qz;
-
-    float angle = +125.0 * PI / 180.0;
-    float half = angle / 2.0;
-    float fw = cos(half);
-    float fx = 0;
-    float fy = 0;
-    float fz = sin(half);
-
-    float rw, rx, ry, rz;
-    quatMultiply(fw, fx, fy, fz,
-                 baseQw, baseQx, baseQy, baseQz,
-                 rw, rx, ry, rz);
-
-    baseQw = rw;
-    baseQx = rx;
-    baseQy = ry;
-    baseQz = rz;
   }
 
   float iw, ix, iy, iz;
@@ -104,6 +106,44 @@ static void updateIMUInternal() {
   imuReport.qy = cy;
   imuReport.qz = cz;
   imuReport.valid = true;
+
+  /* Auto tare: if the reported yaw has stayed within the tolerance
+     band for the full still period, re-zero the yaw only. The base is
+     rebuilt as base = tilt^-1 * current, where tilt is the current
+     relative pitch/roll only (qy(pitch) * qx(roll)). The relative
+     orientation therefore keeps its pitch/roll and its yaw becomes
+     exactly 0. The button above is the full-pose tare used for
+     mounting calibration; this automatic one never touches
+     pitch/roll, so parking on a slope keeps the incline reading. */
+  static float anchorYaw = 0;
+  static unsigned long stillSinceMs = 0;
+  static bool anchorValid = false;
+
+  float dy = imuReport.yaw - anchorYaw;
+  if (dy > 180.0f) dy -= 360.0f;
+  if (dy < -180.0f) dy += 360.0f;
+
+  unsigned long nowMs = millis();
+  if (!anchorValid || fabsf(dy) > AUTO_TARE_TOL_DEG) {
+    anchorYaw = imuReport.yaw;
+    stillSinceMs = nowMs;
+    anchorValid = true;
+  } else if (nowMs - stillSinceMs >= AUTO_TARE_STILL_MS) {
+    float hp = imuReport.pitch * PI / 360.0f; /* half angle, rad */
+    float hr = imuReport.roll * PI / 360.0f;
+    float cp = cos(hp), sp = sin(hp), cr = cos(hr), sr = sin(hr);
+    /* tilt = qy(pitch) * qx(roll) = (cp*cr, cp*sr, sp*cr, -sp*sr);
+       pass its inverse (conjugate) as the left factor. */
+    float nbw, nbx, nby, nbz;
+    quatMultiply(cp * cr, -(cp * sr), -(sp * cr), -(-sp * sr),
+                 qw, qx, qy, qz, nbw, nbx, nby, nbz);
+    baseQw = nbw;
+    baseQx = nbx;
+    baseQy = nby;
+    baseQz = nbz;
+    anchorYaw = 0; /* yaw reads 0 from the next report on */
+    stillSinceMs = nowMs;
+  }
 }
 
 bool initIMU() {
